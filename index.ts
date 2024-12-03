@@ -7,22 +7,20 @@ const program = new Command();
 import { mkdir, writeFile } from 'fs/promises'
 
 program
-  .version("1.0.0")
-  .description("Contab Notas de Entrada")
-  .option("-o, --output <output path>", "Caminho da saída")
-  .parse(process.argv)
+    .version("1.0.0")
+    .description("Contab Notas de Entrada")
+    .option("-o, --output <output path>", "Caminho da saída")
+    .parse(process.argv)
 
 const options = program.opts()
 const outputBasePath = options.output ? [options.output] : [__dirname, 'output']
 
-async function waitForDownload(page: Page)
-{
+async function waitForDownload(page: Page) {
     await page.waitForSelector('.black-overlay')
     await page.waitForSelector('.black-overlay', { hidden: true, timeout: 60000 })
 }
 
-async function waitForTargetDownload(page: Page)
-{
+async function waitForTargetDownload(page: Page) {
     const newTarget = await page.browserContext().waitForTarget(
         target => target.url().startsWith('blob:')
     )
@@ -40,15 +38,15 @@ async function waitForTargetDownload(page: Page)
             }
             reader.readAsDataURL(blob)
         }
-    )}, blobUrl) as string
+        )
+    }, blobUrl) as string
 
     await newPage.close()
 
     return blobData
 }
 
-function screenshot(output: string, page: any, cardBoundingBox: BoundingBox, viewport: Viewport)
-{
+function screenshot(output: string, page: any, cardBoundingBox: BoundingBox, viewport: Viewport) {
     return page.screenshot({
         type: 'png',
         path: output,
@@ -61,8 +59,7 @@ function screenshot(output: string, page: any, cardBoundingBox: BoundingBox, vie
     })
 }
 
-export async function main()
-{
+export async function main() {
     const bar = new cliProgress.SingleBar({
         format: ' {bar} | {empresa}: {status} | {value}/{total}'
     }, cliProgress.Presets.shades_classic)
@@ -74,7 +71,7 @@ export async function main()
 
     // Launch browser
     const browser = await puppeteer.launch({ headless: false })
-    const page = await browser.newPage()
+    let page = await browser.newPage()
     const client = await page.createCDPSession()
 
     bar.start(Object.keys(data).length, 0)
@@ -85,17 +82,20 @@ export async function main()
             bar.update(i, { empresa: row.EMPRESA, status: 'Autenticando' })
 
             // Sign-in
-            await page.goto('https://contribuinte.sefaz.al.gov.br/#/')
-            await page.waitForSelector('.action-button')
-            await page.click('.action-button')
+            await page.goto('https://contribuinte.sefaz.al.gov.br/cobrancadfe/#/calculo-nfe')
+
+            await page.waitForNavigation()
             await page.waitForSelector('#username')
-            await page.waitForSelector('#password')
             await page.type('#username', row.LOGIN)
             await page.type('#password', row.SENHA)
-            page.click('button[type="submit"]')
-            await page.waitForSelector('#mensagem-logado-como', {timeout: 60000})
 
-            await page.goto('https://contribuinte.sefaz.al.gov.br/cobrancadfe/#/calculo-nfe')
+            await page.click('form button[type=submit]')
+            await page.waitForNavigation();
+            // Aguarda usuário logado
+            // const loginErrorSelector = 'body > ngb-modal-window > div > div > jhi-login-modal > div.modal-body > div > div:nth-child(1) > div';
+            const userLoggedSelector = '#logout';
+
+            await page.waitForSelector(userLoggedSelector)
 
             const queryDates: Date[] = []
             let date = new Date()
@@ -126,7 +126,7 @@ export async function main()
 
                 const hasSt = !(await page.$('.disabled[id="3"]'))
                 const outputDir = path.join(...outputBasePath, `${row.EMPRESA} - ${cnpj}`)
-                await mkdir(outputDir, { recursive: true }).catch(_ => {})
+                await mkdir(outputDir, { recursive: true }).catch(_ => { })
 
                 if (!hasSt) {
                     // Se não tiver, tira print
@@ -134,10 +134,10 @@ export async function main()
                     const card = await page.$('.card') as ElementHandle
                     const cardBoundingBox = await card.boundingBox() as BoundingBox
                     const viewport = page.viewport() as Viewport
-                    
+
                     const output = `${outputDir}/st-${date.getFullYear()}-${date.getMonth() + 1}.png`
                     await screenshot(output, page, cardBoundingBox, viewport)
-                    
+
                     continue;
                 }
 
@@ -152,7 +152,7 @@ export async function main()
                 const card = await page.$('.card') as ElementHandle
                 const cardBoundingBox = await card.boundingBox() as BoundingBox
                 const viewport = page.viewport() as Viewport
-                
+
                 const output = `${outputDir}/st-${date.getFullYear()}-${date.getMonth() + 1}.png`
                 await screenshot(output, page, cardBoundingBox, viewport)
 
@@ -169,17 +169,17 @@ export async function main()
                     // @ts-ignore
                     document.querySelector('body > jhi-main > div.container-fluid > div > jhi-calculo-nfe > div > div:nth-child(7) > div:nth-child(2) > div > div > div > div:nth-child(2) > button').click()
                 })
-                
+
                 const printOutput = `${outputDir}/st-${date.getFullYear()}-${date.getMonth() + 1}.pdf`
                 const blobData = await waitForTargetDownload(page)
                 await writeFile(printOutput, blobData.split(',')[1], 'base64')
-                
+
                 bar.update(i, { empresa: row.EMPRESA, status: 'Emitindo', })
                 await page.evaluate(() => {
                     // @ts-ignore Clica para emitir
                     document.querySelector('body > jhi-main > div.container-fluid > div > jhi-calculo-nfe > div > div:nth-child(7) > div:nth-child(3) > div > div > div > div:nth-child(2) > button').click()
                 })
-    
+
                 await page.evaluate(() => {
                     // @ts-ignore Confirma
                     document.querySelector('ngb-modal-window > div > div > jhi-confirmar-emissao-dar-consolidado > div.modal-body.container-tidy > div.text-center > button.btn.btn-outline-success.col-md-2').click()
@@ -218,18 +218,23 @@ export async function main()
             await page.evaluate(() => {
                 // @ts-ignore
                 localStorage.clear()
+                // @ts-ignore
+                sessionStorage.clear()
             })
+            await page.goto('about:blank')
         } catch (e: any) {
             console.error(e)
             console.error(`${row.EMPRESA}: ${e.message}`)
             await page.evaluate(() => {
                 // @ts-ignore
                 localStorage.clear()
+                // @ts-ignore
+                sessionStorage.clear()
             })
             await page.goto('about:blank')
         }
     }
-    
+
     bar.stop()
 }
 
